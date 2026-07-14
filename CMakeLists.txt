@@ -19,6 +19,7 @@ include(darling_exe)
 include(InstallSymlink)
 
 add_darling_executable(installer
+	src/archive/ArchivePath.cpp
 	src/archive/FileReader.cpp
 	src/archive/XARArchive.cpp
 	src/archive/SubReader.cpp
@@ -43,6 +44,12 @@ add_darling_executable(installer
 
 target_link_libraries(installer z lzma bz2 xml2 cxx CoreFoundation Foundation)
 install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
+
+add_darling_executable(installer_archive_path_test
+	src/archive/ArchivePath.cpp
+	src/archive/ArchivePathTest.cpp
+)
+install(TARGETS installer_archive_path_test RUNTIME DESTINATION libexec/darling/usr/libexec)
 
 set(BINARY_PACKAGING_MODE ON)
 InstallSymlink(installer libexec/darling/usr/bin/uninstaller)
