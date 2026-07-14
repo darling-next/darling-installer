@@ -15,6 +15,7 @@
 #include "archive/GzipReader.h"
 #include "archive/PbzxReader.h"
 #include "archive/CPIOArchive.h"
+#include "archive/ArchivePath.h"
 #include "DistributionXml.h"
 #include "PackageInfoXml.h"
 #include "ReceiptsDb.h"
@@ -150,63 +151,7 @@ std::string Installer::getInstallLocation()
 
 void Installer::mkParentDirs(const char *fileName, mode_t mode)
 {
-	// Create directories so that it's possible to create the specified file,
-	// in a manner similiar to `mkdir -p`
-
-	char *path = strdup(fileName);
-
-	for (char *pos = path; pos != nullptr; pos = strchr(pos + 1, '/'))
-	{
-		if (pos == path)
-			continue;
-
-		*pos = '\0';
-
-		if (::mkdir(path, mode) != 0)
-		{
-			if (errno != EEXIST)
-			{
-				std::stringstream ss;
-				ss << "Cannot mkdir " << path << ": " << strerror(errno);
-				throw std::runtime_error(ss.str());
-			}
-		}
-
-		*pos = '/';
-	}
-
-	free(path);
-}
-
-static std::string normalizeArchivePath(const std::string& archivePath)
-{
-	if (!archivePath.empty() && archivePath[0] == '/')
-		throw std::runtime_error("Invalid absolute archive path");
-
-	std::string normalized;
-	size_t componentStart = 0;
-	while (componentStart <= archivePath.length())
-	{
-		size_t slash = archivePath.find('/', componentStart);
-		std::string component = archivePath.substr(
-			componentStart,
-			slash == std::string::npos ? std::string::npos : slash - componentStart);
-
-		if (component == "..")
-			throw std::runtime_error("Invalid parent archive path");
-		if (!component.empty() && component != ".")
-		{
-			if (!normalized.empty())
-				normalized += '/';
-			normalized += component;
-		}
-
-		if (slash == std::string::npos)
-			break;
-		componentStart = slash + 1;
-	}
-
-	return normalized;
+	installer_archive::ensureParentDirectories(fileName, mode);
 }
 
 void Installer::extractPayload(const char* payloadFileName, std::string destinationDir)
@@ -240,7 +185,7 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	{
 		// The final path is a concatenation of target, pkgInfo->installLocation()
 		// and name.
-		name = normalizeArchivePath(name);
+		name = installer_archive::normalizePath(name);
 		path.resize(basePathLen);
 		path += name;
 		
