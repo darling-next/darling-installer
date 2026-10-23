@@ -16,7 +16,7 @@ public:
 	void enableVerboseR() { m_verboseR = true; }
 private:
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
-	void mkParentDirs(const char *fileName, mode_t mode);
+	void mkParentDirs(const char *fileName, mode_t mode, const std::string& trustedRoot);
 	void extractPayload(const char* payloadFileName, std::string destinationDir);
 	int installPayload(const char* subdir = "");
 	std::string getSubdirFilePath(const char* fileName);

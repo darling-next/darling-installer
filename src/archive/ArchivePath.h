@@ -8,7 +8,8 @@ namespace installer_archive
 {
 
 std::string normalizePath(const std::string& archivePath);
-void ensureParentDirectories(const std::string& fileName, mode_t mode);
+void ensureParentDirectories(const std::string& fileName, mode_t mode,
+	const std::string& trustedRoot = std::string());
 
 }
 
