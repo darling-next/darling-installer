@@ -46,33 +46,13 @@ int main()
 	assert(::symlink(outside.c_str(), link.c_str()) == 0);
 	try
 	{
-		// No trusted root: every symlink parent stays rejected, exactly as before.
 		installer_archive::ensureParentDirectories(link + "/escaped/file", 0755);
-		assert(false && "archive parent symlink was accepted without a trusted root");
-	}
-	catch (const std::runtime_error&)
-	{
-	}
-	try
-	{
-		// A trusted root that the link ESCAPES: still rejected. This is the traversal case.
-		installer_archive::ensureParentDirectories(link + "/escaped/file", 0755, safe);
-		assert(false && "archive parent symlink escaping the trusted root was accepted");
+		assert(false && "archive parent symlink was accepted");
 	}
 	catch (const std::runtime_error&)
 	{
 	}
 	assert(::access((outside + "/escaped").c_str(), F_OK) != 0);
-
-	// The macOS system-alias shape: the destination root itself lives under a
-	// directory symlink (`/tmp` -> `private/tmp`). A link that resolves INSIDE the
-	// trusted root is a directory for extraction purposes.
-	std::string aliasTarget = safe + "/private-tmp";
-	assert(::mkdir(aliasTarget.c_str(), 0755) == 0);
-	std::string alias = safe + "/alias";
-	assert(::symlink(aliasTarget.c_str(), alias.c_str()) == 0);
-	installer_archive::ensureParentDirectories(alias + "/payload/file", 0755, safe);
-	assert(::stat((aliasTarget + "/payload").c_str(), &st) == 0 && S_ISDIR(st.st_mode));
 
 	std::printf("ARCHIVE_PATH_TEST_OK\n");
 	return 0;

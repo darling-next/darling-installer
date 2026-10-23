@@ -149,9 +149,9 @@ std::string Installer::getInstallLocation()
 	return path;
 }
 
-void Installer::mkParentDirs(const char *fileName, mode_t mode, const std::string& trustedRoot)
+void Installer::mkParentDirs(const char *fileName, mode_t mode)
 {
-	installer_archive::ensureParentDirectories(fileName, mode, trustedRoot);
+	installer_archive::ensureParentDirectories(fileName, mode);
 }
 
 void Installer::extractPayload(const char* payloadFileName, std::string destinationDir)
@@ -191,7 +191,7 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		
 		// std::cout << path << std::endl;
 
-		mkParentDirs(path.c_str(), st.st_mode & 0777, destinationDir);
+		mkParentDirs(path.c_str(), st.st_mode & 0777);
 
 		if (S_ISDIR(st.st_mode))
 		{
