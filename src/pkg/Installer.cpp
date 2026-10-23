@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <iostream>
+#include <climits>
 #include <cstring>
 #include <sstream>
 #include <errno.h>
@@ -307,7 +308,8 @@ void Installer::runInstallStepScript(const char* scriptName)
 int Installer::installPayload(const char* subdir)
 {
 	std::string identifier, bomPath;
-	char scriptsDir[] = "/tmp/installerXXXXXX";
+	char scriptsDirTemplate[] = "/tmp/installerXXXXXX";
+	std::string scriptsDir;
 	ReceiptsDb::InstalledPackageInfo installedPackageInfo;
 	bool isUpgrade = false;
 	std::shared_ptr<Reader> bomFile;
@@ -330,12 +332,26 @@ int Installer::installPayload(const char* subdir)
 	
 	if (m_xar->containsFile(getSubdirFilePath("Scripts")))
 	{
-		if (!mkdtemp(scriptsDir))
+		if (!mkdtemp(scriptsDirTemplate))
 			throw std::runtime_error("Cannot create temporary directory for scripts");
+		
+		// Resolve the directory the installer itself just created BEFORE any path is
+		// built from it. On macOS /tmp is a symlink into /private/tmp, and the
+		// archive walker refuses a symlink parent by design -- that refusal is what
+		// keeps an archive entry from escaping the destination. Canonicalising the
+		// ROOT (which the installer owns) removes the alias from every generated
+		// path; components that come from the ARCHIVE stay strictly checked. The
+		// canonical form lives in a std::string, so a longer path can never be
+		// truncated into a fixed buffer.
+		char scriptsDirCanonical[PATH_MAX];
+		if (::realpath(scriptsDirTemplate, scriptsDirCanonical) == nullptr)
+			throw std::runtime_error(std::string("Cannot resolve temporary directory for scripts: ") + strerror(errno));
+		scriptsDir = scriptsDirCanonical;
 		
 		// extract scripts
 		extractPayload("Scripts", scriptsDir);
-		chdir(scriptsDir);
+		if (chdir(scriptsDir.c_str()) != 0)
+			throw std::runtime_error(std::string("Cannot enter temporary directory for scripts: ") + strerror(errno));
 		m_scriptsDir = scriptsDir;
 		
 		// TODO: InstallationCheck and VolumeCheck scripts
@@ -349,8 +365,7 @@ int Installer::installPayload(const char* subdir)
 		
 		runInstallStepScript(PackageInfoXml::SCRIPT_PREFLIGHT);
 	}
-	else
-		scriptsDir[0] = 0; // no scripts
+
 	
 	if (ReceiptsDb::getInstalledPackageInfo(m_pkgInfo->identifier().c_str(), installedPackageInfo))
 	{
@@ -369,7 +384,7 @@ int Installer::installPayload(const char* subdir)
 		isUpgrade = true;
 	}
 	
-	if (scriptsDir[0] != 0)
+	if (!scriptsDir.empty())
 	{
 		if (m_verboseR)
 			std::cout << "installer:PHASE:Running installer actions (preinstall)...\n";
@@ -386,7 +401,7 @@ int Installer::installPayload(const char* subdir)
 	}
 	extractPayload("Payload", getInstallLocation());
 	
-	if (scriptsDir[0] != 0)
+	if (!scriptsDir.empty())
 	{
 		if (m_verboseR)
 		{
@@ -399,7 +414,7 @@ int Installer::installPayload(const char* subdir)
 		runInstallStepScript(PackageInfoXml::SCRIPT_POSTFLIGHT);
 		
 		// cleanup
-		removeDirectory(scriptsDir);
+		removeDirectory(scriptsDir.c_str());
 	}
 
 	if (m_verboseR)
