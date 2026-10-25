@@ -2,3 +2,8 @@ darling-installer offers a replacement for the OS X Installer and related utilit
 
 This project is part of Darling and is not intended for standalone use.
 
+Package scripts execute from their validated extraction directory with an
+absolute script path as argv[0]. This preserves interpreter dispatchers that
+select the install phase from the basename of $0. Script names remain relative
+archive paths: absolute names and parent components are rejected.
+

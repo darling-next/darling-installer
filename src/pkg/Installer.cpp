@@ -511,6 +511,19 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 {
 	int pipes[2];
 	int pid;
+
+	// Package scripts are relative to the validated extraction directory.
+	// Pass its absolute spelling as argv[0] too: vendor interpreters may use
+	// the script basename extracted from that path to select the phase.
+	const std::string relative = installer_archive::normalizePath(scriptName);
+	if (relative.empty())
+		throw std::runtime_error("Invalid empty installer script path");
+	std::string executable;
+	executable.reserve(std::strlen(scriptTempDir) + 1 + relative.size());
+	executable.append(scriptTempDir);
+	if (executable.back() != '/')
+		executable.push_back('/');
+	executable.append(relative);
 	
 	pipe(pipes);
 	
@@ -530,7 +543,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		setenv("INSTALLER_TEMP", scriptTempDir, 1);
 		setenv("TMPDIR", scriptTempDir, 1);
 
-		execl(scriptName, scriptName, m_pkg, installLocation, m_target, nullptr);
+		execl(executable.c_str(), executable.c_str(), m_pkg, installLocation, m_target, nullptr);
 
 		err = errno;
 		write(pipes[1], &err, sizeof(err));
