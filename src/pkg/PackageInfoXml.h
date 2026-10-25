@@ -15,7 +15,8 @@ public:
 	std::string identifier() const;
 	std::string version() const;
 	
-	// Install relative to what path
+	// Payload root relative to the target volume. Use install-location when
+	// present, otherwise system-volume-group-install-location; neither means "".
 	std::string installLocation() const;
 	
 	// Can be installed to a different location than installLocation()?

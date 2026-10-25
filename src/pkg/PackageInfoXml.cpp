@@ -42,7 +42,9 @@ std::string PackageInfoXml::version() const
 
 std::string PackageInfoXml::installLocation() const
 {
-	return xpathString("string(/pkg-info/@install-location)");
+	// Preserve legacy location handling whenever that attribute is present.
+	return xpathString("string(/pkg-info/@install-location | "
+			"/pkg-info[not(@install-location)]/@system-volume-group-install-location)");
 }
 
 bool PackageInfoXml::relocatable() const
