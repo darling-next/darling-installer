@@ -190,8 +190,16 @@ void Installer::extractPayload(const char* payloadFileName, const std::string& d
 		
 		// std::cout << path << std::endl;
 
-		installer_archive::ensureParentDirectories(path, st.st_mode & 0777,
-			trustedRoot, m_createdSymlinks);
+		try
+		{
+			installer_archive::ensureParentDirectories(path, st.st_mode & 0777,
+				trustedRoot, m_createdSymlinks);
+		}
+		catch (const std::runtime_error&)
+		{
+			std::cerr << "Archive entry destination: " << path << std::endl;
+			throw;
+		}
 
 		if (S_ISDIR(st.st_mode))
 		{

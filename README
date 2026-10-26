@@ -13,6 +13,9 @@ created by the archive cannot become parents, including indirectly through an
 existing alias and when the target volume is `/`. Script archives retain their
 own narrower extraction root. Absolute archive names and parent traversal are
 rejected before extraction.
+Parent rejection identifies the policy or failed filesystem operation; the
+extractor also reports the archive entry destination instead of hiding it behind
+the parent path.
 
 This is archive-path containment, not a sandbox for package scripts or a lock
 against concurrent destination mutations; the caller owns extraction lifecycle.

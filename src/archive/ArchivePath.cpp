@@ -4,7 +4,7 @@
 #include <climits>
 #include <cstdlib>
 #include <cstring>
-#include <sstream>
+#include <cstdio>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -43,9 +43,12 @@ std::string normalizePath(const std::string& archivePath)
 	return normalized;
 }
 
-static void rejectDirectory(const char* path)
+static void rejectDirectory(const char* path, const char* reason, int error)
 {
-	throw std::runtime_error(std::string("Archive parent is not a directory: ") + path);
+	char message[PATH_MAX + 256];
+	std::snprintf(message, sizeof(message), "Archive parent rejected (%s): %s%s%s",
+		reason, path, error ? ": " : "", error ? strerror(error) : "");
+	throw std::runtime_error(message);
 }
 
 static bool withinRoot(const char* path, const std::string& root)
@@ -63,11 +66,11 @@ static void checkExistingDirectory(const char* path,
 	const CreatedSymlinks& createdSymlinks, unsigned depth)
 {
 	if (depth >= 40)
-		rejectDirectory(path);
+		rejectDirectory(path, "symlink depth limit", 0);
 	size_t length = std::strlen(path);
 	char probe[PATH_MAX];
 	if (length >= sizeof(probe))
-		rejectDirectory(path);
+		rejectDirectory(path, "path too long", 0);
 	std::memcpy(probe, path, length + 1);
 	for (size_t pos = 1; pos <= length; ++pos)
 	{
@@ -77,15 +80,15 @@ static void checkExistingDirectory(const char* path,
 		probe[pos] = '\0';
 		struct stat st;
 		if (::lstat(probe, &st) != 0)
-			rejectDirectory(probe);
+			rejectDirectory(probe, "lstat failed", errno);
 		if (S_ISLNK(st.st_mode))
 		{
 			if (createdSymlinks.count(std::make_pair(st.st_dev, st.st_ino)))
-				rejectDirectory(probe);
+				rejectDirectory(probe, "archive-created symlink", 0);
 			char target[PATH_MAX];
 			ssize_t count = ::readlink(probe, target, sizeof(target));
 			if (count <= 0 || count >= static_cast<ssize_t>(sizeof(target)))
-				rejectDirectory(probe);
+				rejectDirectory(probe, "invalid symlink target", count < 0 ? errno : 0);
 			std::string next;
 			if (target[0] != '/')
 			{
@@ -96,7 +99,7 @@ static void checkExistingDirectory(const char* path,
 			checkExistingDirectory(next.c_str(), createdSymlinks, depth + 1);
 		}
 		else if (!S_ISDIR(st.st_mode))
-			rejectDirectory(probe);
+			rejectDirectory(probe, "non-directory object", 0);
 		probe[pos] = separator;
 	}
 }
@@ -110,16 +113,18 @@ static void ensureDirectory(const char* path, mode_t mode,
 		if (errno != ENOENT || (::mkdir(path, mode) != 0 && errno != EEXIST))
 			throw std::runtime_error(std::string("Cannot mkdir ") + path + ": " + strerror(errno));
 		if (::lstat(path, &st) != 0)
-			rejectDirectory(path);
+			rejectDirectory(path, "lstat after mkdir failed", errno);
 	}
 	if (S_ISDIR(st.st_mode))
 		return;
 	if (!S_ISLNK(st.st_mode))
-		rejectDirectory(path);
+		rejectDirectory(path, "non-directory object", 0);
 	checkExistingDirectory(path, createdSymlinks, 0);
 	char canonical[PATH_MAX];
-	if (::realpath(path, canonical) == nullptr || !withinRoot(canonical, trustedRoot))
-		rejectDirectory(path);
+	if (::realpath(path, canonical) == nullptr)
+		rejectDirectory(path, "realpath failed", errno);
+	if (!withinRoot(canonical, trustedRoot))
+		rejectDirectory(canonical, "resolved outside trusted target", 0);
 }
 
 void ensureParentDirectories(const std::string& fileName, mode_t mode,
