@@ -26,7 +26,7 @@
 #include <fcntl.h>
 
 Installer::Installer(const char* pkg, const char* target)
-: m_pkg(pkg), m_target(target)
+: m_pkg(pkg)
 {
 	std::shared_ptr<FileReader> file;
 	struct stat st;
@@ -38,11 +38,11 @@ Installer::Installer(const char* pkg, const char* target)
 	else if (target[0] != '/')
 		throw std::runtime_error("Invalid target path");
 	
-	if (::stat(target, &st) != 0)
-		throw std::runtime_error("Invalid target path");
-	
-	if (!S_ISDIR(st.st_mode))
+	char canonicalTarget[PATH_MAX];
+	if (::realpath(target, canonicalTarget) == nullptr ||
+		::stat(canonicalTarget, &st) != 0 || !S_ISDIR(st.st_mode))
 		throw std::runtime_error("Invalid target path; not a directory");
+	m_target = canonicalTarget;
 	
 	file.reset(new FileReader(pkg));
 	m_xar.reset(new XARArchive(file));
@@ -143,19 +143,17 @@ std::string Installer::getInstallLocation()
 	if (path[path.length()-1] != '/') path += '/';
 	
 	installLocation = m_pkgInfo->installLocation();
-	if (installLocation != "/")
-		path += installLocation;
+	size_t first = installLocation.find_first_not_of('/');
+	if (first != std::string::npos)
+		path += installer_archive::normalizePath(installLocation.substr(first));
 	if (path[path.length()-1] != '/') path += '/';
 	
 	return path;
 }
 
-void Installer::mkParentDirs(const char *fileName, mode_t mode)
-{
-	installer_archive::ensureParentDirectories(fileName, mode);
-}
 
-void Installer::extractPayload(const char* payloadFileName, std::string destinationDir)
+void Installer::extractPayload(const char* payloadFileName, const std::string& destinationDir,
+	const std::string& trustedRoot)
 {
 	std::string path, name;
 	std::shared_ptr<Reader> cpioFile;
@@ -177,10 +175,10 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	
 	cpio.reset(new CPIOArchive(cpioFile));
 	
-	if (destinationDir[destinationDir.length()-1] != '/')
-		destinationDir += '/';
 	path = destinationDir;
-	basePathLen = destinationDir.length();
+	if (path[path.length()-1] != '/')
+		path += '/';
+	basePathLen = path.length();
 	
 	while (cpio->next(name, st, cpioFile))
 	{
@@ -192,7 +190,8 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		
 		// std::cout << path << std::endl;
 
-		mkParentDirs(path.c_str(), st.st_mode & 0777);
+		installer_archive::ensureParentDirectories(path, st.st_mode & 0777,
+			trustedRoot, m_createdSymlinks);
 
 		if (S_ISDIR(st.st_mode))
 		{
@@ -213,11 +212,15 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		}
 		else if (S_ISLNK(st.st_mode))
 		{
-			char target[256];
-			int rd;
-			
-			rd = cpioFile->read(target, sizeof(target)-1, 0);
-			target[rd] = '\0';
+			char target[PATH_MAX];
+			size_t length = cpioFile->length();
+			if (length >= sizeof(target))
+				throw std::runtime_error("Archive symlink target is too long");
+			int count = cpioFile->read(target, length, 0);
+			if (count < 0 || static_cast<size_t>(count) != length ||
+				std::memchr(target, '\0', length) != nullptr)
+				throw std::runtime_error("Invalid archive symlink target");
+			target[length] = '\0';
 			
 			::unlink(path.c_str());
 			if (::symlink(target, path.c_str()) != 0)
@@ -226,6 +229,10 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 				ss << "Cannot create symlink " << path << ": " << strerror(errno);
 				throw std::runtime_error(ss.str());
 			}
+			struct stat linkStatus;
+			if (::lstat(path.c_str(), &linkStatus) != 0 || !S_ISLNK(linkStatus.st_mode))
+				throw std::runtime_error("Cannot identify extracted symlink");
+			m_createdSymlinks.insert(std::make_pair(linkStatus.st_dev, linkStatus.st_ino));
 		}
 		else
 		{
@@ -349,7 +356,7 @@ int Installer::installPayload(const char* subdir)
 		scriptsDir = scriptsDirCanonical;
 		
 		// extract scripts
-		extractPayload("Scripts", scriptsDir);
+		extractPayload("Scripts", scriptsDir, scriptsDir);
 		if (chdir(scriptsDir.c_str()) != 0)
 			throw std::runtime_error(std::string("Cannot enter temporary directory for scripts: ") + strerror(errno));
 		m_scriptsDir = scriptsDir;
@@ -399,7 +406,7 @@ int Installer::installPayload(const char* subdir)
 		std::cout << "installer:PHASE:Extracting files...\n";
 		std::cout << "installer:%50.0\n";
 	}
-	extractPayload("Payload", getInstallLocation());
+	extractPayload("Payload", getInstallLocation(), m_target);
 	
 	if (!scriptsDir.empty())
 	{
@@ -538,12 +545,12 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 
 		setenv("COMMAND_LINE_INSTALL", "1", 1);
 		setenv("PACKAGE_PATH", m_pkg, 1);
-		setenv("DSTVOLUME", m_target, 1);
+		setenv("DSTVOLUME", m_target.c_str(), 1);
 		setenv("DSTROOT", installLocation, 1);
 		setenv("INSTALLER_TEMP", scriptTempDir, 1);
 		setenv("TMPDIR", scriptTempDir, 1);
 
-		execl(executable.c_str(), executable.c_str(), m_pkg, installLocation, m_target, nullptr);
+		execl(executable.c_str(), executable.c_str(), m_pkg, installLocation, m_target.c_str(), nullptr);
 
 		err = errno;
 		write(pipes[1], &err, sizeof(err));

@@ -1,6 +1,8 @@
 #include "ArchivePath.h"
 
 #include <cerrno>
+#include <climits>
+#include <cstdlib>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -41,46 +43,111 @@ std::string normalizePath(const std::string& archivePath)
 	return normalized;
 }
 
-static void ensureDirectory(const char* path, mode_t mode)
+static void rejectDirectory(const char* path)
 {
-	struct stat st;
-	if (::lstat(path, &st) == 0)
+	throw std::runtime_error(std::string("Archive parent is not a directory: ") + path);
+}
+
+static bool withinRoot(const char* path, const std::string& root)
+{
+	if (root == "/")
+		return path[0] == '/';
+	return std::strncmp(path, root.c_str(), root.size()) == 0 &&
+		(path[root.size()] == '\0' || path[root.size()] == '/');
+}
+
+// Upstream mkdir-p follows framework aliases but supplies no escape defense.
+// Validate the entire existing link chain: an alias can itself point through a
+// symlink created by an earlier archive entry, including under target "/".
+static void checkExistingDirectory(const char* path,
+	const CreatedSymlinks& createdSymlinks, unsigned depth)
+{
+	if (depth >= 40)
+		rejectDirectory(path);
+	size_t length = std::strlen(path);
+	char probe[PATH_MAX];
+	if (length >= sizeof(probe))
+		rejectDirectory(path);
+	std::memcpy(probe, path, length + 1);
+	for (size_t pos = 1; pos <= length; ++pos)
 	{
-		if (S_ISLNK(st.st_mode) || !S_ISDIR(st.st_mode))
+		if (probe[pos] != '/' && probe[pos] != '\0')
+			continue;
+		char separator = probe[pos];
+		probe[pos] = '\0';
+		struct stat st;
+		if (::lstat(probe, &st) != 0)
+			rejectDirectory(probe);
+		if (S_ISLNK(st.st_mode))
 		{
-			std::stringstream ss;
-			ss << "Archive parent is not a directory: " << path;
-			throw std::runtime_error(ss.str());
+			if (createdSymlinks.count(std::make_pair(st.st_dev, st.st_ino)))
+				rejectDirectory(probe);
+			char target[PATH_MAX];
+			ssize_t count = ::readlink(probe, target, sizeof(target));
+			if (count <= 0 || count >= static_cast<ssize_t>(sizeof(target)))
+				rejectDirectory(probe);
+			std::string next;
+			if (target[0] != '/')
+			{
+				const char* slash = std::strrchr(probe, '/');
+				next.assign(probe, static_cast<size_t>(slash - probe + 1));
+			}
+			next.append(target, static_cast<size_t>(count));
+			checkExistingDirectory(next.c_str(), createdSymlinks, depth + 1);
 		}
-		return;
-	}
-
-	if (errno != ENOENT || (::mkdir(path, mode) != 0 && errno != EEXIST))
-	{
-		std::stringstream ss;
-		ss << "Cannot mkdir " << path << ": " << strerror(errno);
-		throw std::runtime_error(ss.str());
-	}
-
-	if (::lstat(path, &st) != 0 || S_ISLNK(st.st_mode) || !S_ISDIR(st.st_mode))
-	{
-		std::stringstream ss;
-		ss << "Archive parent is not a directory: " << path;
-		throw std::runtime_error(ss.str());
+		else if (!S_ISDIR(st.st_mode))
+			rejectDirectory(probe);
+		probe[pos] = separator;
 	}
 }
 
-void ensureParentDirectories(const std::string& fileName, mode_t mode)
+static void ensureDirectory(const char* path, mode_t mode,
+	const std::string& trustedRoot, const CreatedSymlinks& createdSymlinks)
 {
-	std::string path = fileName;
-	for (size_t pos = path.find('/'); pos != std::string::npos;
-		pos = path.find('/', pos + 1))
+	struct stat st;
+	if (::lstat(path, &st) != 0)
 	{
-		if (pos == 0)
-			continue;
+		if (errno != ENOENT || (::mkdir(path, mode) != 0 && errno != EEXIST))
+			throw std::runtime_error(std::string("Cannot mkdir ") + path + ": " + strerror(errno));
+		if (::lstat(path, &st) != 0)
+			rejectDirectory(path);
+	}
+	if (S_ISDIR(st.st_mode))
+		return;
+	if (!S_ISLNK(st.st_mode))
+		rejectDirectory(path);
+	checkExistingDirectory(path, createdSymlinks, 0);
+	char canonical[PATH_MAX];
+	if (::realpath(path, canonical) == nullptr || !withinRoot(canonical, trustedRoot))
+		rejectDirectory(path);
+}
 
-		std::string parent = path.substr(0, pos);
-		ensureDirectory(parent.c_str(), mode);
+void ensureParentDirectories(const std::string& fileName, mode_t mode,
+	const std::string& trustedRoot, const CreatedSymlinks& createdSymlinks)
+{
+	if (trustedRoot.empty() || trustedRoot[0] != '/' ||
+		!withinRoot(fileName.c_str(), trustedRoot))
+		throw std::runtime_error("Archive destination is outside the trusted root");
+	char path[PATH_MAX];
+	if (fileName.size() >= sizeof(path))
+		throw std::runtime_error("Archive destination is too long");
+	std::memcpy(path, fileName.c_str(), fileName.size() + 1);
+	size_t component = trustedRoot.size();
+	if (path[component] == '/')
+		++component;
+	for (size_t pos = component; pos <= fileName.size(); ++pos)
+	{
+		if (path[pos] != '/' && path[pos] != '\0')
+			continue;
+		if (pos - component == 2 && path[component] == '.' && path[component + 1] == '.')
+			throw std::runtime_error("Invalid parent archive path");
+		if (pos < fileName.size())
+		{
+			path[pos] = '\0';
+			ensureDirectory(path, mode, trustedRoot, createdSymlinks);
+			path[pos] = '/';
+		}
+		component = pos + 1;
 	}
 }
 

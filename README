@@ -7,3 +7,13 @@ absolute script path as argv[0]. This preserves interpreter dispatchers that
 select the install phase from the basename of $0. Script names remain relative
 archive paths: absolute names and parent components are rejected.
 
+Payload extraction requires a canonical target-volume root. Existing directory
+aliases may be traversed only when they resolve inside that root. Symlinks
+created by the archive cannot become parents, including indirectly through an
+existing alias and when the target volume is `/`. Script archives retain their
+own narrower extraction root. Absolute archive names and parent traversal are
+rejected before extraction.
+
+This is archive-path containment, not a sandbox for package scripts or a lock
+against concurrent destination mutations; the caller owns extraction lifecycle.
+

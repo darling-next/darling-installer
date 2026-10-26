@@ -6,6 +6,7 @@
 #include "archive/XARArchive.h"
 #include "PackageInfoXml.h"
 #include "bom/BOMStore.h"
+#include "archive/ArchivePath.h"
 
 class Installer
 {
@@ -16,8 +17,8 @@ public:
 	void enableVerboseR() { m_verboseR = true; }
 private:
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
-	void mkParentDirs(const char *fileName, mode_t mode);
-	void extractPayload(const char* payloadFileName, std::string destinationDir);
+	void extractPayload(const char* payloadFileName, const std::string& destinationDir,
+		const std::string& trustedRoot);
 	int installPayload(const char* subdir = "");
 	std::string getSubdirFilePath(const char* fileName);
 	std::string getInstallLocation();
@@ -33,7 +34,7 @@ private:
 	const char* getPackageName();
 private:
 	const char* m_pkg;
-	const char* m_target;
+	std::string m_target;
 	std::shared_ptr<XARArchive> m_xar;
 	std::string m_originalCwd;
 	
@@ -41,6 +42,7 @@ private:
 	const char* m_subdir;
 	std::shared_ptr<PackageInfoXml> m_pkgInfo;
 	std::string m_scriptsDir, m_installLocation;
+	installer_archive::CreatedSymlinks m_createdSymlinks;
 
 	bool m_verboseR = false;
 };
